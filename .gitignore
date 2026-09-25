@@ -1,0 +1,37 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.Python
+build/
+dist/
+
+# --- Virtual environments ---
+venv/
+.venv/
+env/
+ENV/
+
+# --- Editor / IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
+
+# --- Pacman project generated output ---
+# These CSV trace logs are regenerated every time you run pacman.py or the
+# autograder, so tracking them just creates noisy diffs while you're
+# developing. Uncomment the line below if you'd rather not commit them at
+# all during development.
+# evidence/*.csv
+
+# Recordings made with the -r / --recordActions flag
+*.pkl
+
+# Keep the evidence/ folder structure even if it's ever empty
+!evidence/.gitkeep
