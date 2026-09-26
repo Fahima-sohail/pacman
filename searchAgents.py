@@ -284,16 +284,35 @@ class CornersProblem(search.SearchProblem):
         """
         Returns the start state (in your state space, not the full Pacman state
         space)
+
+        HOW WE PICK THE STATE REPRESENTATION:
+        A "state" here has to capture two things: WHERE Pacman is, and WHICH
+        corners he has already visited so far. So we use a simple 2-item
+        tuple: (position, visitedCorners)
+          - position:       an (x, y) tuple, same as any normal Pacman state
+          - visitedCorners: a tuple of 4 booleans, one per corner in
+                             self.corners, True if that corner has been
+                             visited already.
+        We use a tuple of booleans (not a list) because tuples are
+        hashable, and search states need to be hashable so they can be put
+        into sets/dictionaries (the "explored" set, etc.).
+
+        At the very start, Pacman hasn't visited anything yet - UNLESS his
+        starting position happens to already be sitting on top of a corner.
         """
-        "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+        visited = tuple(self.startingPosition == corner for corner in self.corners)
+        return (self.startingPosition, visited)
 
     def isGoalState(self, state: Any):
         """
         Returns whether this search state is a goal state of the problem.
+
+        Since visitedCorners is a tuple of 4 booleans, the goal is simply
+        reached once every single one of them is True - i.e. all 4 corners
+        have been visited.
         """
-        "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+        position, visitedCorners = state
+        return all(visitedCorners)
 
     def getSuccessors(self, state: Any):
         """
@@ -307,15 +326,29 @@ class CornersProblem(search.SearchProblem):
         """
 
         successors = []
+        position, visitedCorners = state
+
         for action in [Directions.NORTH, Directions.SOUTH, Directions.EAST, Directions.WEST]:
             # Add a successor state to the successor list if the action is legal
             # Here's a code snippet for figuring out whether a new position hits a wall:
-            #   x,y = currentPosition
-            #   dx, dy = Actions.directionToVector(action)
-            #   nextx, nexty = int(x + dx), int(y + dy)
-            #   hitsWall = self.walls[nextx][nexty]
+            x, y = position
+            dx, dy = Actions.directionToVector(action)
+            nextx, nexty = int(x + dx), int(y + dy)
+            hitsWall = self.walls[nextx][nexty]
 
-            "*** YOUR CODE HERE ***"
+            if not hitsWall:
+                nextPosition = (nextx, nexty)
+
+                # If we just stepped onto one of the 4 corners, mark it
+                # visited in a BRAND NEW tuple (tuples can't be edited in
+                # place - we build an updated copy).
+                nextVisited = tuple(
+                    visited or (nextPosition == corner)
+                    for corner, visited in zip(self.corners, visitedCorners)
+                )
+
+                nextState = (nextPosition, nextVisited)
+                successors.append((nextState, action, 1))
 
         self._expanded += 1 # DO NOT CHANGE
         return successors
@@ -350,8 +383,39 @@ def cornersHeuristic(state: Any, problem: CornersProblem):
     corners = problem.corners # These are the corner coordinates
     walls = problem.walls # These are the walls of the maze, as a Grid (game.py)
 
-    "*** YOUR CODE HERE ***"
-    return 0 # Default to trivial solution
+    position, visitedCorners = state
+
+    # Which corners are still left to visit?
+    remainingCorners = [corner for corner, visited in zip(corners, visitedCorners) if not visited]
+
+    if not remainingCorners:
+        return 0    # already touched all 4 - nothing left to estimate
+
+    # HOW THIS HEURISTIC WORKS ("greedy nearest corner" chain):
+    # We estimate the remaining cost by pretending Pacman ignores walls and
+    # simply walks in a straight line (Manhattan distance) to the CLOSEST
+    # unvisited corner, then from there to the next closest remaining one,
+    # and so on, until none are left. We add up all those straight-line
+    # hops. This never overestimates the true cost because:
+    #   - Manhattan distance is always <= the real (wall-avoiding) distance
+    #     between any two points.
+    #   - Pacman genuinely must visit every remaining corner in SOME order,
+    #     so chaining distances between them is a fair lower-bound estimate.
+    # That's what makes it admissible (and, in practice, consistent too).
+    total = 0
+    currentPos = position
+    cornersLeft = list(remainingCorners)
+
+    while cornersLeft:
+        # Find the nearest remaining corner (by Manhattan distance) to
+        # wherever our imaginary walk currently is.
+        distances = [util.manhattanDistance(currentPos, corner) for corner in cornersLeft]
+        nearestIndex = distances.index(min(distances))
+
+        total += distances[nearestIndex]
+        currentPos = cornersLeft.pop(nearestIndex)
+
+    return total
 
 class AStarCornersAgent(SearchAgent):
     "A SearchAgent for FoodSearchProblem using A* and your foodHeuristic"
@@ -444,8 +508,40 @@ def foodHeuristic(state: Tuple[Tuple, List[List]], problem: FoodSearchProblem):
     problem.heuristicInfo['wallCount']
     """
     position, foodGrid = state
-    "*** YOUR CODE HERE ***"
-    return 0
+    foodList = foodGrid.asList()
+
+    if not foodList:
+        return 0    # no food left - nothing left to estimate
+
+    # HOW THIS HEURISTIC WORKS ("farthest food, real maze distance"):
+    # Pacman must, at some point, walk all the way to whichever remaining
+    # food dot is FARTHEST from him. That trip alone already costs at least
+    # the real maze distance to that dot (walls and all - not just a
+    # straight line). So using "distance to the single farthest dot" as
+    # our estimate is a safe lower bound on the true remaining cost - it
+    # can never overestimate, because Pacman can't finish eating everything
+    # in fewer steps than it takes to just reach the farthest one.
+    #
+    # We use REAL maze distance (via BFS, through mazeDistance()) instead
+    # of Manhattan distance here because mazes for this task are full of
+    # walls, so Manhattan distance would badly underestimate and barely
+    # help A* prune anything. Real maze distances are expensive to
+    # recompute, so we cache every pair we've already computed inside
+    # problem.heuristicInfo - that way, if this state (or one asking about
+    # the same two points) comes up again, we just look it up instead of
+    # re-running BFS.
+    if 'distanceCache' not in problem.heuristicInfo:
+        problem.heuristicInfo['distanceCache'] = {}
+    distanceCache = problem.heuristicInfo['distanceCache']
+
+    farthest = 0
+    for food in foodList:
+        cacheKey = (position, food)
+        if cacheKey not in distanceCache:
+            distanceCache[cacheKey] = mazeDistance(position, food, problem.startingGameState)
+        farthest = max(farthest, distanceCache[cacheKey])
+
+    return farthest
 
 class ClosestDotSearchAgent(SearchAgent):
     "Search for all food using a sequence of searches"
@@ -475,8 +571,12 @@ class ClosestDotSearchAgent(SearchAgent):
         walls = gameState.getWalls()
         problem = AnyFoodSearchProblem(gameState)
 
-        "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+        # AnyFoodSearchProblem's goal is "any square with food on it," and
+        # every move costs the same (1 step). That's exactly the situation
+        # BFS is built for: it always finds the SHORTEST path in an
+        # unweighted graph. So we just hand the problem to our own
+        # breadthFirstSearch from search.py and return whatever path it finds.
+        return search.breadthFirstSearch(problem)
 
 class AnyFoodSearchProblem(PositionSearchProblem):
     """
@@ -511,8 +611,11 @@ class AnyFoodSearchProblem(PositionSearchProblem):
         """
         x,y = state
 
-        "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+        # This is just like PositionSearchProblem's goal test, except the
+        # "goal" isn't one fixed point anymore - it's ANY square that still
+        # has food on it. self.food is a Grid of True/False (see game.py),
+        # so we just check whether there's food at this (x, y).
+        return self.food[x][y]
 
 def mazeDistance(point1: Tuple[int, int], point2: Tuple[int, int], gameState: pacman.GameState) -> int:
     """
