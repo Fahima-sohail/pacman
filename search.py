@@ -448,9 +448,101 @@ def greedyBestFirstSearch(problem: SearchProblem, heuristic=nullHeuristic):
 
 
 def aStarSearch(problem: SearchProblem, heuristic=nullHeuristic):
-    """Search the node that has the lowest combined cost and heuristic first."""
-    "*** YOUR CODE HERE ***"
-    util.raiseNotDefined()
+    """
+    Search the node that has the lowest combined cost and heuristic first.
+
+    HOW THIS WORKS (A*):
+    - This is basically UCS and GBFS mixed together. We use a PriorityQueue
+      as the fringe/frontier, but the priority is f(n) = g(n) + h(n):
+        g(n) = the real accumulated cost to reach this state so far
+        h(n) = the heuristic's ESTIMATE of the remaining cost to the goal
+      Using both together is what makes A* smart: it won't wander off
+      toward something that just "looks close" (like GBFS can), because
+      g(n) still counts how expensive it was to get there.
+    - Just like UCS, bestCost[state] remembers the cheapest g(n) seen so
+      far for that state, and if we find an even cheaper way to reach a
+      state that's already sitting on the fringe, we call fringe.update(...)
+      to fix its priority instead of leaving a stale, worse entry behind.
+    - We keep an explicit "explored" set exactly like the other algorithms,
+      so this is a strict graph search.
+    - IMPORTANT for optimality: A* is only guaranteed to find the cheapest
+      path if the heuristic is admissible (never overestimates the true
+      remaining cost) and consistent. With nullHeuristic (h=0 always),
+      this function behaves exactly like UCS.
+    """
+    # ---------- SET UP THE FRINGE (priority queue, priority = f(n) = g+h) ----------
+    fringe = util.PriorityQueue()
+    startState = problem.getStartState()
+    startH = heuristic(startState, problem)
+    fringe.push(startState, 0 + startH)
+
+    bestCost = {startState: 0}             # state -> cheapest g(n) found so far
+    bestPath = {startState: []}            # state -> matching path of actions
+    parentOf = {startState: (None, None)}  # only used for the CSV log
+
+    explored = set()
+    logRows = []
+    iteration = 0
+
+    while not fringe.isEmpty():
+        frontierBefore = len(fringe.heap)
+        state = fringe.pop()               # lowest f(n) = g(n)+h(n) comes out first
+
+        # This state might already have been expanded through an older,
+        # more expensive queue entry - if so, skip it.
+        if state in explored:
+            continue
+
+        iteration += 1
+        explored.add(state)
+
+        path = bestPath[state]
+        g = bestCost[state]
+        h = heuristic(state, problem)
+        parentState, actionUsed = parentOf[state]
+
+        # ---- Goal test happens when we EXPAND (pop) a node ----
+        # (Safe to do here, same reasoning as UCS, because a consistent
+        # heuristic guarantees f(n) never decreases as we go deeper, so the
+        # first time the goal is popped, that IS the optimal path.)
+        if problem.isGoalState(state):
+            logRows.append({
+                "iteration": iteration, "expanded_state": state,
+                "parent": parentState, "action": actionUsed,
+                "generated_successors": [],
+                "frontier_before": frontierBefore, "frontier_after": frontierBefore,
+                "explored": len(explored), "g": g, "h": h, "f": g + h,
+            })
+            writeSearchLog("astar", logRows)
+            return path
+
+        # ---- Expand: look at every successor and its step cost ----
+        generated = []
+        for succState, action, stepCost in problem.getSuccessors(state):
+            generated.append(succState)
+            newCost = g + stepCost
+
+            # Only bother updating the fringe if this is either a brand new
+            # state, or a cheaper way to reach a state we already know about.
+            if succState not in explored and (succState not in bestCost or newCost < bestCost[succState]):
+                bestCost[succState] = newCost
+                bestPath[succState] = path + [action]
+                parentOf[succState] = (state, action)
+                succF = newCost + heuristic(succState, problem)   # f(n) = g(n) + h(n)
+                fringe.update(succState, succF)
+
+        frontierAfter = len(fringe.heap)
+
+        logRows.append({
+            "iteration": iteration, "expanded_state": state,
+            "parent": parentState, "action": actionUsed,
+            "generated_successors": generated,
+            "frontier_before": frontierBefore, "frontier_after": frontierAfter,
+            "explored": len(explored), "g": g, "h": h, "f": g + h,
+        })
+
+    writeSearchLog("astar", logRows)
+    return None
 
 
 # Abbreviations
